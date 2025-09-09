@@ -2,26 +2,27 @@ import requests
 import pandas as pd
 import jdatetime
 from time import sleep
-from flask import Flask
-import threading, os
+from flask import Flask, request
 
 # ======== تنظیمات ========
-TOKEN = "127184142:t8EC5x45a2aXInYYgz4L2EeVny7PBb1uiqwgeIpc"   # 👈 توکن ربات بله
+TOKEN = "127184142:t8EC5x45a2aXInYYgz4L2EeVny7PBb1uiqwgeIpc"
 API_URL = f"https://tapi.bale.ai/bot{TOKEN}"
 EXCEL_FILE = "data_fixed.xlsx"
+
+# Flask برای callback
+app = Flask(__name__)
 
 # ======== خواندن اکسل ========
 try:
     df = pd.read_excel(EXCEL_FILE, sheet_name="دانشجویان")
-    df['کد ملی'] = df['کد ملی'].astype(str).str.strip()  # 👈 اجباری: کد ملی رشته بشه
     print("فایل اکسل با موفقیت بارگذاری شد!")
 except Exception as e:
     print("خطا در خواندن اکسل:", e)
     exit()
 
-# ======== متغیرها ========
+# ======== متغیرهای عمومی ========
 last_update_id = None
-user_states = {}  # وضعیت کاربران
+user_states = {}  # وضعیت کاربران (برای دنبال کردن مراحل)
 
 print("ربات فعال شد! منتظر پیام‌ها هستم...")
 
@@ -43,14 +44,57 @@ def create_test_payment(amount, description, callback_url):
         print("خطا در ایجاد لینک پرداخت:", e)
     return None, None
 
-# ======== منطق اصلی ربات ========
+
+# ======== کال‌بک برای ثبت پرداخت ========
+@app.route("/callback")
+def callback():
+    try:
+        chat_id = request.args.get("chat_id")
+        national_id = request.args.get("id")
+        name = request.args.get("name")
+        amount = int(request.args.get("amount", 0))
+
+        # اکسل رو بخون
+        df_students = pd.read_excel(EXCEL_FILE, sheet_name="دانشجویان")
+        df_students['کد ملی'] = df_students['کد ملی'].astype(str).str.strip()
+
+        # پیدا کردن دانشجو
+        idx = df_students[df_students['کد ملی'] == str(national_id)].index
+        if not idx.empty:
+            current_tuition = int(df_students.loc[idx[0], 'شهریه'])
+            new_tuition = max(0, current_tuition - (amount // 10))  # چون زرین‌پال ریال می‌گیره
+            df_students.loc[idx[0], 'شهریه'] = new_tuition
+
+            # ذخیره مجدد
+            with pd.ExcelWriter(EXCEL_FILE, mode="a", if_sheet_exists="replace") as writer:
+                df_students.to_excel(writer, sheet_name="دانشجویان", index=False)
+
+            msg = (
+                f"✅ پرداخت {amount // 10} تومان با موفقیت ثبت شد.\n"
+                f"مبلغ باقی‌مانده شهریه: {new_tuition} تومان"
+            )
+        else:
+            msg = "کد ملی در فایل پیدا نشد!"
+
+        # پیام به کاربر
+        requests.post(f"{API_URL}/sendMessage", json={"chat_id": chat_id, "text": msg})
+
+    except Exception as e:
+        print("خطا در callback:", e)
+        return "Error", 500
+
+    return "OK", 200
+
+
+# ======== حلقه اصلی گرفتن پیام‌ها ========
 def run_bot():
     global last_update_id
+
     while True:
         try:
             res = requests.get(
                 f"{API_URL}/getUpdates",
-                params={"offset": last_update_id + 1 if last_update_id else None},
+                params={"offset": last_update_id},
                 timeout=10
             )
             data = res.json()
@@ -58,18 +102,18 @@ def run_bot():
             if "result" in data:
                 for update in data["result"]:
                     update_id = update["update_id"]
-                    last_update_id = update_id
+                    last_update_id = update_id + 1   # 🔹 مهم: جلوگیری از دوباره‌خوانی
 
                     if "message" in update:
                         chat_id = update["message"]["chat"]["id"]
                         text = update["message"].get("text", "").strip()
+
                         print(f"پیام از {chat_id}: {text}")
 
                         # 🔹 گزارش مدیر
                         if text == "3861804190":
                             try:
                                 df_students = pd.read_excel(EXCEL_FILE, sheet_name="دانشجویان")
-                                df_students['کد ملی'] = df_students['کد ملی'].astype(str).str.strip()
                                 df_payments = pd.read_excel(EXCEL_FILE, sheet_name="پرداخت‌ها")
 
                                 # جمع مانده شهریه
@@ -100,9 +144,8 @@ def run_bot():
 
                         # دریافت کد ملی
                         elif user_states.get(chat_id, {}).get("step") == "waiting_national_id" and text.isdigit():
-                            national_id = text.strip()  # 👈 ورودی هم به رشته تبدیل میشه
+                            national_id = int(text)
                             row = df[df['کد ملی'] == national_id]
-
                             if not row.empty:
                                 name = row.iloc[0]['نام']
                                 tuition = row.iloc[0]['شهریه']
@@ -156,18 +199,15 @@ def run_bot():
             print("خطا:", e)
             sleep(5)
 
-# ======== وب‌سرور ساده برای Render ========
-app = Flask(__name__)
 
-@app.route("/")
-def home():
-    return "Bot is running!"
-
+# ======== اجرای همزمان Flask و Bot ========
 if __name__ == "__main__":
-    # اجرای ربات در Thread جدا
+    import threading
+
+    # اجرای بات در یک ترد جدا
     t = threading.Thread(target=run_bot)
     t.start()
 
-    # اجرای وب‌سرور (برای Render)
-    port = int(os.environ.get("PORT", 5000))
+    # اجرای Flask روی Render
+    port = 5000
     app.run(host="0.0.0.0", port=port)

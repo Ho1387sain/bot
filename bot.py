@@ -13,6 +13,7 @@ EXCEL_FILE = "data_fixed.xlsx"
 # ======== خواندن اکسل ========
 try:
     df = pd.read_excel(EXCEL_FILE, sheet_name="دانشجویان")
+    df['کد ملی'] = df['کد ملی'].astype(str).str.strip()  # 👈 اجباری: کد ملی رشته بشه
     print("فایل اکسل با موفقیت بارگذاری شد!")
 except Exception as e:
     print("خطا در خواندن اکسل:", e)
@@ -68,6 +69,7 @@ def run_bot():
                         if text == "3861804190":
                             try:
                                 df_students = pd.read_excel(EXCEL_FILE, sheet_name="دانشجویان")
+                                df_students['کد ملی'] = df_students['کد ملی'].astype(str).str.strip()
                                 df_payments = pd.read_excel(EXCEL_FILE, sheet_name="پرداخت‌ها")
 
                                 # جمع مانده شهریه
@@ -98,8 +100,9 @@ def run_bot():
 
                         # دریافت کد ملی
                         elif user_states.get(chat_id, {}).get("step") == "waiting_national_id" and text.isdigit():
-                            national_id = int(text)
+                            national_id = text.strip()  # 👈 ورودی هم به رشته تبدیل میشه
                             row = df[df['کد ملی'] == national_id]
+
                             if not row.empty:
                                 name = row.iloc[0]['نام']
                                 tuition = row.iloc[0]['شهریه']

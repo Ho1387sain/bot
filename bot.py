@@ -126,7 +126,8 @@ while True:
                         # ایجاد لینک پرداخت تستی
                         payment_url, authority = create_test_payment(
                             amount_rial, f"پرداخت شهریه توسط {name}",
-                            f"http://127.0.0.1:5000/callback?chat_id={chat_id}&amount={amount_rial}&id={national_id}&name={name}"
+                            f"https://bot-xma5.onrender.com/callback?chat_id={chat_id}&amount={amount_rial}&id={national_id}&name={name}"
+
                         )
 
                         if payment_url:
